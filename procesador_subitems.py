@@ -91,6 +91,8 @@ def procesar_archivo():
         if filas_extra:
             df = df.drop(index=filas_extra).reset_index(drop=True)
 
+        index_map = dict(zip(df['__original_index__'], df.index))
+
         base_salida = archivo.replace(".xlsx", "_procesado.xlsx")
         salida = base_salida
         contador = 1
@@ -107,11 +109,13 @@ def procesar_archivo():
         amarillo = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
 
         for fila in filas_azules:
-            if fila is not None:
-                ws[f"A{fila + 2}"].fill = azul
+            row = index_map.get(fila)
+            if row is not None:
+                ws[f"A{row + 2}"].fill = azul
         for fila in filas_amarillas:
-            if fila is not None:
-                ws[f"A{fila + 2}"].fill = amarillo
+            row = index_map.get(fila)
+            if row is not None:
+                ws[f"A{row + 2}"].fill = amarillo
 
         columnas_fecha = ['Received Date', 'Required Bid Date', 'Submitted Date']
         col_idx = {}
