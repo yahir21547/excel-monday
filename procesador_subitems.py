@@ -8,7 +8,6 @@ from PIL import Image, ImageTk
 import os
 import sys
 
-# Obtener ruta base compatible con .exe
 BASE_PATH = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 
 def procesar_archivo():
@@ -29,21 +28,25 @@ def procesar_archivo():
     try:
         df = pd.read_excel(archivo, header=2)
         df['__original_index__'] = df.index
+        df['__color__'] = None
+        df['__eliminar__'] = False
 
         ultima_fila_valida = None
         dentro_de_subitems = False
-        filas_azules = []
-        filas_amarillas = []
-        filas_subitems = []
 
         for i in range(len(df)):
-            valor_columna_a = str(df.iloc[i, 0]).strip().lower()
+            if pd.isna(df.iloc[i, 0]):
+                valor_columna_a = ''
+            else:
+                valor_columna_a = str(df.iloc[i, 0])
+                valor_columna_a = valor_columna_a.encode('ascii', errors='ignore').decode()
+                valor_columna_a = valor_columna_a.strip().lower().replace(" ", "").replace("\xa0", "").replace("\t", "")
 
-            if valor_columna_a == "subitems":
+            if "subitem" in valor_columna_a:
                 dentro_de_subitems = True
-                filas_subitems.append(i)
+                df.loc[i, '__eliminar__'] = True
                 if i > 0:
-                    filas_azules.append(df.iloc[i - 1]['__original_index__'])
+                    df.loc[i - 1, '__color__'] = "azul"
                 continue
 
             if dentro_de_subitems and pd.isna(df.iloc[i, 0]):
@@ -52,19 +55,19 @@ def procesar_archivo():
                         if col == 'Quote - SAP':
                             if (pd.isna(df.at[i, col]) or df.at[i, col] == '') and pd.notna(df.iloc[i, 1]):
                                 df.at[i, col] = df.iloc[i, 1]
-                        elif col == df.columns[2]:  # Columna C (RFQ), copiar siempre
+                        elif col == df.columns[2]:
                             df.at[i, col] = ultima_fila_valida[col]
-                        elif col == df.columns[4]:  # Columna E, siempre sobrescribir
+                        elif col == df.columns[4]:
                             df.at[i, col] = ultima_fila_valida[col]
                         elif pd.isna(df.at[i, col]) or df.at[i, col] == '':
                             df.at[i, col] = ultima_fila_valida[col]
-                    filas_amarillas.append(df.iloc[i]['__original_index__'])
+                    df.loc[i, '__color__'] = "amarillo"
                 continue
 
             dentro_de_subitems = False
             ultima_fila_valida = df.iloc[i].copy()
 
-        # 🧹 Eliminar encabezados repetidos y las 3 filas anteriores
+        # Eliminar encabezados repetidos y las 3 filas anteriores
         encabezado = [
             'Name', 'Subitems', 'RFQ Number', 'Quote - SAP', 'Processed by:', 'Status',
             'Received Date', 'Required Bid Date', 'Submitted Date', 'Factory Input',
@@ -78,21 +81,19 @@ def procesar_archivo():
                 for j in range(i - 3, i + 1):
                     if j >= 0:
                         filas_a_eliminar.append(j)
-        filas_a_eliminar = sorted(set(filas_a_eliminar))
-        df = df.drop(index=filas_a_eliminar).reset_index(drop=True)
+        df.loc[filas_a_eliminar, '__eliminar__'] = True
 
-        # 🧹 Eliminar fila específica: ['Subitems', 'Name', 'Owner', 'Quote - SAP', 'special features']
+        # Eliminar fila específica con columnas 'subitems', 'name', ...
         fila_objetivo = ['subitems', 'name', 'owner', 'quote - sap', 'special features']
-        filas_extra = []
         for i in range(len(df)):
             fila = list(df.iloc[i].fillna('').astype(str).str.strip().str.lower())
             if fila[:5] == fila_objetivo:
-                filas_extra.append(i)
-        if filas_extra:
-            df = df.drop(index=filas_extra).reset_index(drop=True)
+                df.loc[i, '__eliminar__'] = True
 
-        index_map = dict(zip(df['__original_index__'], df.index))
+        # Eliminar todas las filas marcadas
+        df = df[df['__eliminar__'] != True].reset_index(drop=True)
 
+        # Guardar Excel sin columnas auxiliares
         base_salida = archivo.replace(".xlsx", "_procesado.xlsx")
         salida = base_salida
         contador = 1
@@ -100,22 +101,22 @@ def procesar_archivo():
             salida = base_salida.replace(".xlsx", f" ({contador}).xlsx")
             contador += 1
 
-        df.drop(columns=['__original_index__']).to_excel(salida, index=False)
+        df_sin_aux = df.drop(columns=['__original_index__', '__eliminar__', '__color__'])
+        df_sin_aux.to_excel(salida, index=False)
 
+        # Abrir con openpyxl para aplicar colores
         wb = load_workbook(salida)
         ws = wb.active
 
         azul = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
         amarillo = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
 
-        for fila in filas_azules:
-            row = index_map.get(fila)
-            if row is not None:
-                ws[f"A{row + 2}"].fill = azul
-        for fila in filas_amarillas:
-            row = index_map.get(fila)
-            if row is not None:
-                ws[f"A{row + 2}"].fill = amarillo
+        for i, row in df.iterrows():
+            color = row.get('__color__')
+            if color == "azul":
+                ws[f"A{i + 2}"].fill = azul
+            elif color == "amarillo":
+                ws[f"A{i + 2}"].fill = amarillo
 
         columnas_fecha = ['Received Date', 'Required Bid Date', 'Submitted Date']
         col_idx = {}
@@ -129,10 +130,6 @@ def procesar_archivo():
                 if cell.is_date:
                     cell.number_format = 'yyyy-mm-dd'
 
-        filas_subitems_ordenadas = sorted(filas_subitems, reverse=True)
-        for idx in filas_subitems_ordenadas:
-            ws.delete_rows(idx + 2)
-
         wb.save(salida)
         wb.close()
 
@@ -143,7 +140,7 @@ def procesar_archivo():
     os.startfile(os.path.dirname(salida))
     messagebox.showinfo("✅ Listo", f"Archivo procesado con éxito:\n{salida}")
 
-# Crear ventana principal
+# GUI
 ventana = tk.Tk()
 ventana.title("Procesador de Subitems")
 ventana.geometry("550x350")
@@ -164,20 +161,12 @@ logo = ImageTk.PhotoImage(logo_img)
 label_logo = tk.Label(ventana, image=logo, bg="#1e1e1e")
 label_logo.pack(pady=10)
 
-label_titulo = tk.Label(ventana,
-                        text="Procesador de Subitems",
-                        font=("Segoe UI", 18, "bold"),
-                        bg="#1e1e1e",
-                        fg="white")
+label_titulo = tk.Label(ventana, text="Procesador de Subitems", font=("Segoe UI", 18, "bold"), bg="#1e1e1e", fg="white")
 label_titulo.pack(pady=5)
 
 estilo = ttk.Style()
 estilo.theme_use("clam")
-estilo.configure("TButton",
-                 foreground="white",
-                 background="#2d2d2d",
-                 font=("Segoe UI", 12),
-                 padding=10)
+estilo.configure("TButton", foreground="white", background="#2d2d2d", font=("Segoe UI", 12), padding=10)
 estilo.map("TButton", background=[("active", "#3c3c3c")])
 
 boton = ttk.Button(ventana, text="📂 Seleccionar archivo Excel", command=procesar_archivo)
