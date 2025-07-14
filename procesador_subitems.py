@@ -67,6 +67,7 @@ def procesar_archivo():
             dentro_de_subitems = False
             ultima_fila_valida = df.iloc[i].copy()
 
+        # Eliminar encabezados repetidos y las 3 filas anteriores
         encabezado = [
             'Name', 'Subitems', 'RFQ Number', 'Quote - SAP', 'Processed by:', 'Status',
             'Received Date', 'Required Bid Date', 'Submitted Date', 'Factory Input',
@@ -82,14 +83,17 @@ def procesar_archivo():
                         filas_a_eliminar.append(j)
         df.loc[filas_a_eliminar, '__eliminar__'] = True
 
+        # Eliminar fila específica con columnas 'subitems', 'name', ...
         fila_objetivo = ['subitems', 'name', 'owner', 'quote - sap', 'special features']
         for i in range(len(df)):
             fila = list(df.iloc[i].fillna('').astype(str).str.strip().str.lower())
             if fila[:5] == fila_objetivo:
                 df.loc[i, '__eliminar__'] = True
 
+        # Eliminar todas las filas marcadas
         df = df[df['__eliminar__'] != True].reset_index(drop=True)
 
+        # Guardar Excel sin columnas auxiliares
         base_salida = archivo.replace(".xlsx", "_procesado.xlsx")
         salida = base_salida
         contador = 1
@@ -100,6 +104,7 @@ def procesar_archivo():
         df_sin_aux = df.drop(columns=['__original_index__', '__eliminar__', '__color__'])
         df_sin_aux.to_excel(salida, index=False)
 
+        # Abrir con openpyxl para aplicar colores
         wb = load_workbook(salida)
         ws = wb.active
 
@@ -135,6 +140,7 @@ def procesar_archivo():
     os.startfile(os.path.dirname(salida))
     messagebox.showinfo("✅ Listo", f"Archivo procesado con éxito:\n{salida}")
 
+# GUI
 ventana = tk.Tk()
 ventana.title("Procesador de Subitems")
 ventana.geometry("550x350")
