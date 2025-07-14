@@ -1,3 +1,12 @@
+"""
+Procesador de Subitems
+
+Herramienta con interfaz gráfica para limpiar y organizar
+exportaciones de Monday.com en formato Excel. Las filas de subitems
+se completan automáticamente, se eliminan encabezados repetidos y se
+resaltan los cambios en el archivo resultante.
+"""
+
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, Toplevel, Label
@@ -8,9 +17,18 @@ from PIL import Image, ImageTk
 import os
 import sys
 
-BASE_PATH = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+BASE_PATH = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 def procesar_archivo():
+    """Procesa el archivo seleccionado y genera una copia limpiada.
+
+    Pasos principales:
+    1. Solicitar el archivo al usuario mediante un cuadro de diálogo.
+    2. Completar filas de subitems utilizando la última fila válida.
+    3. Remover encabezados y filas que no corresponden al reporte final.
+    4. Guardar un nuevo Excel con colores indicativos y fechas formateadas.
+    """
+
     archivo = filedialog.askopenfilename(
         title="Selecciona tu archivo Excel",
         filetypes=[("Archivos Excel", "*.xlsx")]
@@ -22,18 +40,23 @@ def procesar_archivo():
     cargando.title("Procesando archivo...")
     cargando.geometry("300x100")
     cargando.configure(bg="#1e1e1e")
+    # Pequeña ventana para informar que la tarea está en progreso
     Label(cargando, text="⏳ Procesando, por favor espera...", bg="#1e1e1e", fg="white", font=("Segoe UI", 11)).pack(expand=True)
     cargando.update()
 
     try:
+        # Cargar el Excel ignorando las dos primeras filas de encabezado
         df = pd.read_excel(archivo, header=2)
+        # Columnas auxiliares para identificar cada fila y su estado
         df['__original_index__'] = df.index
         df['__color__'] = None
         df['__eliminar__'] = False
 
+        # Variables de control utilizadas durante la iteración
         ultima_fila_valida = None
         dentro_de_subitems = False
 
+        # Recorrer todas las filas para completar y marcar información
         for i in range(len(df)):
             if pd.isna(df.iloc[i, 0]):
                 valor_columna_a = ''
@@ -43,13 +66,17 @@ def procesar_archivo():
                 valor_columna_a = valor_columna_a.strip().lower().replace(" ", "").replace("\xa0", "").replace("\t", "")
 
             if "subitem" in valor_columna_a:
+                # Al detectar el texto "subitem" marcamos la fila para eliminar
+                # y recordamos que estamos dentro de un bloque de subitems
                 dentro_de_subitems = True
                 df.loc[i, '__eliminar__'] = True
                 if i > 0:
+                    # La fila previa se pintará en azul para indicar que es la original
                     df.loc[i - 1, '__color__'] = "azul"
                 continue
 
             if dentro_de_subitems and pd.isna(df.iloc[i, 0]):
+                # Completar la fila vacía copiando datos de la última fila válida
                 if ultima_fila_valida is not None:
                     for col in df.columns:
                         if col == 'Quote - SAP':
@@ -61,13 +88,15 @@ def procesar_archivo():
                             df.at[i, col] = ultima_fila_valida[col]
                         elif pd.isna(df.at[i, col]) or df.at[i, col] == '':
                             df.at[i, col] = ultima_fila_valida[col]
+                    # Esta fila generada se marcará en amarillo en el Excel final
                     df.loc[i, '__color__'] = "amarillo"
                 continue
 
             dentro_de_subitems = False
             ultima_fila_valida = df.iloc[i].copy()
 
-        # Eliminar encabezados repetidos y las 3 filas anteriores
+        # Buscar encabezados duplicados y marcar esos bloques junto con las
+        # tres filas anteriores para eliminarlos del resultado final
         encabezado = [
             'Name', 'Subitems', 'RFQ Number', 'Quote - SAP', 'Processed by:', 'Status',
             'Received Date', 'Required Bid Date', 'Submitted Date', 'Factory Input',
@@ -83,17 +112,18 @@ def procesar_archivo():
                         filas_a_eliminar.append(j)
         df.loc[filas_a_eliminar, '__eliminar__'] = True
 
-        # Eliminar fila específica con columnas 'subitems', 'name', ...
+        # Quitar la fila de etiquetas de ejemplo que suele aparecer en las
+        # exportaciones de Monday.com
         fila_objetivo = ['subitems', 'name', 'owner', 'quote - sap', 'special features']
         for i in range(len(df)):
             fila = list(df.iloc[i].fillna('').astype(str).str.strip().str.lower())
             if fila[:5] == fila_objetivo:
                 df.loc[i, '__eliminar__'] = True
 
-        # Eliminar todas las filas marcadas
+        # Remover del DataFrame todas las filas que se marcaron previamente
         df = df[df['__eliminar__'] != True].reset_index(drop=True)
 
-        # Guardar Excel sin columnas auxiliares
+        # Generar el nombre del nuevo archivo sin sobrescribir alguno existente
         base_salida = archivo.replace(".xlsx", "_procesado.xlsx")
         salida = base_salida
         contador = 1
@@ -104,7 +134,7 @@ def procesar_archivo():
         df_sin_aux = df.drop(columns=['__original_index__', '__eliminar__', '__color__'])
         df_sin_aux.to_excel(salida, index=False)
 
-        # Abrir con openpyxl para aplicar colores
+        # Abrir el archivo generado para aplicar colores y formatos de fecha
         wb = load_workbook(salida)
         ws = wb.active
 
@@ -140,7 +170,7 @@ def procesar_archivo():
     os.startfile(os.path.dirname(salida))
     messagebox.showinfo("✅ Listo", f"Archivo procesado con éxito:\n{salida}")
 
-# GUI
+# Configuración de la interfaz gráfica principal
 ventana = tk.Tk()
 ventana.title("Procesador de Subitems")
 ventana.geometry("550x350")
